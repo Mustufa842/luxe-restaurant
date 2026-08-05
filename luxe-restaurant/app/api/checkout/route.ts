@@ -20,6 +20,11 @@ export async function POST(req: NextRequest) {
 
     const body = parseOrThrow(checkoutSessionRequestSchema, await req.json());
 
+    const label = LABELS[body.kind];
+    if (!label) {
+      return NextResponse.json({ error: "Invalid checkout kind" }, { status: 400 });
+    }
+
     // If this checkout is tied to a reservation, confirm it belongs to this user.
     if (body.reservationId) {
       const reservation = await prisma.reservation.findUnique({
@@ -37,7 +42,7 @@ export async function POST(req: NextRequest) {
         {
           price_data: {
             currency: "usd",
-            product_data: { name: LABELS[body.kind] },
+            product_data: { name: label },
             unit_amount: body.amountCents,
           },
           quantity: 1,

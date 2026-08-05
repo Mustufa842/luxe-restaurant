@@ -1,0 +1,257 @@
+// ────────────────────────────────────────────────────────────
+// Luxe Restaurant — Prisma Schema
+// PostgreSQL. Run `npx prisma migrate dev` after editing.
+// ────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth / Users ──────────────────────────────────────────────
+
+enum Role {
+  CUSTOMER
+  STAFF
+  ADMIN
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  role          Role      @default(CUSTOMER)
+
+  // PII — encrypted at the application layer before it ever hits Prisma.
+  // See lib/crypto.ts (encryptPII/decryptPII). Never store plaintext here.
+  phoneEncrypted String?
+
+  passwordHash String? // Argon2id. Null for OAuth-only accounts.
+
+  accounts     Account[]
+  sessions     Session[]
+  reservations Reservation[]
+  orders       Order[]
+  chatSessions ChatSession[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+}
+
+// NextAuth adapter models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Menu ──────────────────────────────────────────────────────
+
+enum MenuCategory {
+  AMUSE_BOUCHE
+  APPETIZER
+  MAIN
+  DESSERT
+  BEVERAGE
+  TASTING_MENU
+}
+
+model MenuItem {
+  id          String       @id @default(cuid())
+  name        String
+  slug        String       @unique
+  description String       @db.Text
+  category    MenuCategory
+  priceCents  Int // store money as integer cents — never floats
+  currency    String       @default("usd")
+  imageUrl    String?
+  allergens   String[] // e.g. ["nuts", "shellfish"]
+  isAvailable Boolean      @default(true)
+  isSignature Boolean      @default(false)
+  sortOrder   Int          @default(0)
+
+  orderItems OrderItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category, isAvailable])
+}
+
+// ─── Reservations ────────────────────────────────────────────
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  DEPOSIT_REQUIRED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum ReservationSource {
+  WEBSITE
+  WHATSAPP
+  ADMIN
+}
+
+model Reservation {
+  id         String            @id @default(cuid())
+  userId     String?
+  user       User?             @relation(fields: [userId], references: [id])
+  guestName  String
+  // Contact PII: encrypted at rest
+  guestPhoneEncrypted String
+  guestEmail String?
+
+  partySize  Int
+  date       DateTime
+  timeSlot   String // "19:30"
+  status     ReservationStatus @default(PENDING)
+  source     ReservationSource @default(WEBSITE)
+  notes      String?           @db.Text
+
+  depositRequired   Boolean  @default(false)
+  depositPaymentLog PaymentLog?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([date, timeSlot])
+  @@index([status])
+}
+
+// ─── Orders (catering / premium takeout) ───────────────────────
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  FULFILLED
+  CANCELLED
+  REFUNDED
+}
+
+model Order {
+  id           String      @id @default(cuid())
+  userId       String
+  user         User        @relation(fields: [userId], references: [id])
+  status       OrderStatus @default(PENDING_PAYMENT)
+  totalCents   Int
+  currency     String      @default("usd")
+
+  items      OrderItem[]
+  paymentLog PaymentLog?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+}
+
+model OrderItem {
+  id         String   @id @default(cuid())
+  orderId    String
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId String
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id])
+  quantity   Int
+  unitPriceCents Int // snapshot of price at time of order
+}
+
+// ─── Payments ──────────────────────────────────────────────────
+
+enum PaymentProvider {
+  STRIPE
+}
+
+enum PaymentStatus {
+  REQUIRES_PAYMENT
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  EXPIRED
+}
+
+model PaymentLog {
+  id       String          @id @default(cuid())
+  provider PaymentProvider @default(STRIPE)
+
+  // Never store raw card data. Only Stripe references.
+  stripeCheckoutSessionId String @unique
+  stripePaymentIntentId   String?
+
+  amountCents Int
+  currency    String        @default("usd")
+  status      PaymentStatus @default(REQUIRES_PAYMENT)
+
+  orderId       String?      @unique
+  order         Order?       @relation(fields: [orderId], references: [id])
+  reservationId String?      @unique
+  reservation   Reservation? @relation(fields: [reservationId], references: [id])
+
+  rawEventType String? // last webhook event type processed, for audit trail
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+// ─── AI Concierge chat sessions ─────────────────────────────────
+
+model ChatSession {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  channel   String   @default("web") // "web" | "whatsapp"
+
+  // For WhatsApp sessions: the sender JID (e.g. "14155551234@s.whatsapp.net"),
+  // so the bot can look up conversation state directly instead of scanning.
+  // Null for web sessions, which are addressed by `id` alone.
+  externalId String? @unique
+
+  // Store as JSON array of {role, content, ts} — never store secrets in messages
+  messages  Json     @default("[]")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}

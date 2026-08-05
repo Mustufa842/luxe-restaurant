@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-display: "Cormorant Garamond", serif;
+  --font-body: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-onyx text-ivory font-body antialiased;
+}
+
+::selection {
+  @apply bg-champagne/30 text-ivory;
+}
+
+/* Visible keyboard focus everywhere — required, never remove without a replacement. */
+:focus-visible {
+  outline: 2px solid theme("colors.champagne");
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.hairline {
+  @apply border-t border-champagne/20;
+}
+
+.eyebrow {
+  @apply font-mono text-xs tracking-widest2 uppercase text-champagne/80;
+}
